@@ -31,6 +31,9 @@ class BridgeAiViewModel : ViewModel() {
     )
         private set
 
+    var activeRole by mutableStateOf<AppRole?>(null)
+        private set
+
     var offlineMode by mutableStateOf(true)
         private set
 
@@ -110,6 +113,30 @@ class BridgeAiViewModel : ViewModel() {
 
     fun updateWorkInProgress(enabled: Boolean) {
         workInProgress = enabled
+    }
+
+    fun selectRole(role: AppRole) {
+        activeRole = role
+        currentUser = when (role) {
+            AppRole.Leader -> UserProfile(
+                id = 3L,
+                realName = "王工",
+                userCode = "L-2026001",
+                company = "XX交通养护公司",
+                role = "leader",
+            )
+            AppRole.Member -> UserProfile(
+                id = 2L,
+                realName = "李工",
+                userCode = "I-2026018",
+                company = "XX交通养护公司",
+                role = "inspector",
+            )
+        }
+    }
+
+    fun resetRoleSelection() {
+        activeRole = null
     }
 
     fun dismissSyncNotice() {
@@ -1394,6 +1421,11 @@ data class SyncRunSnapshot(
     val readyCount: Int,
     val deferredCount: Int,
 )
+
+enum class AppRole {
+    Leader,
+    Member,
+}
 
 data class ProjectProgress(
     val total: Int,
