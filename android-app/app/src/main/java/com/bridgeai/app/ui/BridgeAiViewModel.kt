@@ -12,11 +12,21 @@ import com.bridgeai.app.data.MediaType
 import com.bridgeai.app.data.NamedCount
 import com.bridgeai.app.data.ProjectItem
 import com.bridgeai.app.data.ProjectMember
+import com.bridgeai.app.data.QuickCaptureSegment
 import com.bridgeai.app.data.ReportLevelStats
 import com.bridgeai.app.data.ReportItem
 import com.bridgeai.app.data.ReportPreviewData
 import com.bridgeai.app.data.UserProfile
 import kotlin.random.Random
+
+private fun String.toMeasurementOrFallback(fallback: String): String {
+    val normalized = trim()
+        .removeSuffix("米")
+        .removeSuffix("m")
+        .removeSuffix("M")
+        .trim()
+    return normalized.takeIf { it.matches(Regex("""\d+(\.\d+)?""")) } ?: fallback
+}
 
 class BridgeAiViewModel : ViewModel() {
 
@@ -69,6 +79,9 @@ class BridgeAiViewModel : ViewModel() {
     var bridges by mutableStateOf(sampleBridges())
         private set
 
+    var bridgeCorrectionNotes by mutableStateOf<Map<Long, String>>(emptyMap())
+        private set
+
     var projects by mutableStateOf(sampleProjects())
         private set
 
@@ -82,6 +95,9 @@ class BridgeAiViewModel : ViewModel() {
         private set
 
     var reportSyncStates by mutableStateOf(seedInitialReportSyncStates(sampleReports()))
+        private set
+
+    var quickCaptureSegments by mutableStateOf(sampleQuickCaptureSegments())
         private set
 
     fun toggleOfflineMode() {
@@ -145,6 +161,8 @@ class BridgeAiViewModel : ViewModel() {
 
     fun getBridge(bridgeId: Long): BridgeItem? = bridges.firstOrNull { it.id == bridgeId }
 
+    fun getBridgeCorrectionNote(bridgeId: Long): String = bridgeCorrectionNotes[bridgeId].orEmpty()
+
     fun getProject(projectId: Long): ProjectItem? = projects.firstOrNull { it.id == projectId }
 
     fun getProjectMembers(projectId: Long): List<ProjectMember> =
@@ -163,6 +181,90 @@ class BridgeAiViewModel : ViewModel() {
     fun getComponent(componentId: Long): ComponentTask? = components.firstOrNull { it.id == componentId }
 
     fun getReport(reportId: Long): ReportItem? = reports.firstOrNull { it.id == reportId }
+
+    fun updateBridgeCorrection(
+        bridgeId: Long,
+        totalLengthText: String,
+        bridgeWidthText: String,
+        mainSpanText: String,
+        address: String,
+        maintenanceUnit: String,
+        correctionNote: String,
+    ): Boolean {
+        val index = bridges.indexOfFirst { it.id == bridgeId }
+        if (index < 0) return false
+        val bridge = bridges[index]
+
+        bridges = bridges.toMutableList().also {
+            it[index] = bridge.copy(
+                totalLength = totalLengthText.toMeasurementOrFallback(bridge.totalLength),
+                bridgeWidth = bridgeWidthText.toMeasurementOrFallback(bridge.bridgeWidth),
+                mainSpan = mainSpanText.toMeasurementOrFallback(bridge.mainSpan),
+                address = address.trim().ifBlank { bridge.address },
+                maintenanceUnit = maintenanceUnit.trim().ifBlank { bridge.maintenanceUnit },
+            )
+        }
+        bridgeCorrectionNotes = bridgeCorrectionNotes.toMutableMap().also { notes ->
+            val trimmedNote = correctionNote.trim()
+            if (trimmedNote.isBlank()) {
+                notes.remove(bridgeId)
+            } else {
+                notes[bridgeId] = trimmedNote
+            }
+        }
+        reports = reports.map { report ->
+            if (report.bridgeId == bridgeId) report.copy(synced = false) else report
+        }
+        reportSyncStates = reportSyncStates.toMutableMap().also { states ->
+            reports.filter { it.bridgeId == bridgeId }.forEach { report ->
+                states[report.id] = "pending"
+            }
+        }
+        return true
+    }
+
+    fun getQuickCaptureSegments(projectId: Long? = null): List<QuickCaptureSegment> =
+        quickCaptureSegments
+            .filter { projectId == null || it.projectId == projectId }
+            .sortedByDescending { it.id }
+
+    fun getQuickCaptureSegment(segmentId: Long): QuickCaptureSegment? =
+        quickCaptureSegments.firstOrNull { it.id == segmentId }
+
+    fun saveQuickCaptureSegment(
+        projectId: Long,
+        mediaItems: List<ComponentMedia>,
+        voiceText: String,
+        extractedText: String,
+        reportText: String,
+    ): Boolean {
+        val project = getProject(projectId) ?: return false
+        if (mediaItems.isEmpty() && voiceText.isBlank()) return false
+        val sequence = quickCaptureSegments.count { it.projectId == projectId } + 1
+        val segment = QuickCaptureSegment(
+            id = System.currentTimeMillis(),
+            projectId = projectId,
+            bridgeId = project.bridgeId,
+            sequence = sequence,
+            mediaItems = mediaItems,
+            voiceText = voiceText.trim(),
+            extractedText = extractedText.trim(),
+            reportText = reportText.trim(),
+            createdLabel = "第${sequence}段 · 离线待同步",
+        )
+        quickCaptureSegments = listOf(segment) + quickCaptureSegments
+        return true
+    }
+
+    fun voidQuickCaptureSegment(segmentId: Long) {
+        quickCaptureSegments = quickCaptureSegments.map { segment ->
+            if (segment.id == segmentId) {
+                segment.copy(statusText = "已作废", voided = true)
+            } else {
+                segment
+            }
+        }
+    }
 
     fun projectProgress(projectId: Long): ProjectProgress {
         val projectComponents = getProjectComponents(projectId)
@@ -557,6 +659,7 @@ class BridgeAiViewModel : ViewModel() {
             report = report,
             project = project,
             bridge = bridge,
+            bridgeCorrectionNote = getBridgeCorrectionNote(bridge.id),
             inspectedComponents = inspectedComponents,
             totalComponents = projectComponents.size,
             collectedComponents = projectComponents.count { it.status.isCollectedOrLater() },
@@ -791,9 +894,9 @@ class BridgeAiViewModel : ViewModel() {
                 bridgeType = "国省干线",
                 structureType = "斜拉桥",
                 constructionYear = 2005,
-                totalLength = 900,
-                bridgeWidth = 32,
-                mainSpan = 500,
+                totalLength = "900",
+                bridgeWidth = "32",
+                mainSpan = "500",
                 statusText = "检测中",
                 address = "江苏省南京市XX路段",
                 maintenanceUnit = "XX交通养护公司",
@@ -806,9 +909,9 @@ class BridgeAiViewModel : ViewModel() {
                 bridgeType = "国省干线",
                 structureType = "悬索桥",
                 constructionYear = 2010,
-                totalLength = 1200,
-                bridgeWidth = 28,
-                mainSpan = 800,
+                totalLength = "1200",
+                bridgeWidth = "28",
+                mainSpan = "800",
                 statusText = "待检测",
                 address = "山东省济南市XX路段",
                 maintenanceUnit = "XX高速养护中心",
@@ -821,9 +924,9 @@ class BridgeAiViewModel : ViewModel() {
                 bridgeType = "市政桥梁",
                 structureType = "梁式桥",
                 constructionYear = 2015,
-                totalLength = 240,
-                bridgeWidth = 18,
-                mainSpan = 60,
+                totalLength = "240",
+                bridgeWidth = "18",
+                mainSpan = "60",
                 statusText = "已完成",
                 address = "上海市浦东新区XX路段",
                 maintenanceUnit = "市政设施管理中心",
@@ -836,9 +939,9 @@ class BridgeAiViewModel : ViewModel() {
                 bridgeType = "国省干线",
                 structureType = "连续箱梁桥",
                 constructionYear = 2012,
-                totalLength = 460,
-                bridgeWidth = 24,
-                mainSpan = 90,
+                totalLength = "460",
+                bridgeWidth = "24",
+                mainSpan = "90",
                 statusText = "检测中",
                 address = "浙江省宁波市XX路段",
                 maintenanceUnit = "沿海养护分公司",
@@ -851,9 +954,9 @@ class BridgeAiViewModel : ViewModel() {
                 bridgeType = "市政桥梁",
                 structureType = "预应力混凝土桥",
                 constructionYear = 2018,
-                totalLength = 320,
-                bridgeWidth = 22,
-                mainSpan = 45,
+                totalLength = "320",
+                bridgeWidth = "22",
+                mainSpan = "45",
                 statusText = "检测中",
                 address = "湖南省长沙市XX高架",
                 maintenanceUnit = "城建养护中心",
@@ -866,9 +969,9 @@ class BridgeAiViewModel : ViewModel() {
                 bridgeType = "国省干线",
                 structureType = "T梁桥",
                 constructionYear = 2008,
-                totalLength = 680,
-                bridgeWidth = 26,
-                mainSpan = 70,
+                totalLength = "680",
+                bridgeWidth = "26",
+                mainSpan = "70",
                 statusText = "待检测",
                 address = "陕西省西安市XX互通",
                 maintenanceUnit = "西北高速养护中心",
@@ -881,9 +984,9 @@ class BridgeAiViewModel : ViewModel() {
                 bridgeType = "市政桥梁",
                 structureType = "钢箱梁桥",
                 constructionYear = 2016,
-                totalLength = 760,
-                bridgeWidth = 30,
-                mainSpan = 180,
+                totalLength = "760",
+                bridgeWidth = "30",
+                mainSpan = "180",
                 statusText = "待检测",
                 address = "江苏省苏州市滨江新区XX段",
                 maintenanceUnit = "滨江养护管理所",
@@ -896,9 +999,9 @@ class BridgeAiViewModel : ViewModel() {
                 bridgeType = "市政桥梁",
                 structureType = "匝道桥",
                 constructionYear = 2019,
-                totalLength = 410,
-                bridgeWidth = 20,
-                mainSpan = 55,
+                totalLength = "410",
+                bridgeWidth = "20",
+                mainSpan = "55",
                 statusText = "检测中",
                 address = "湖北省武汉市北环快速路XX互通",
                 maintenanceUnit = "北环桥隧养护中心",
@@ -1297,6 +1400,69 @@ class BridgeAiViewModel : ViewModel() {
                     "建议预留钢箱梁近景拍摄与墩顶裂缝复测时间。",
                 ),
                 synced = false,
+            ),
+        )
+
+        private fun sampleQuickCaptureSegments() = listOf(
+            QuickCaptureSegment(
+                id = 7001,
+                projectId = 201,
+                bridgeId = 101,
+                sequence = 1,
+                mediaItems = listOf(samplePhoto("q7001-1"), samplePhoto("q7001-2"), samplePhoto("q7001-3")),
+                voiceText = "这一组照片是长江大桥右幅伸缩缝附近，桥面有破损和松散，车辆经过有明显跳车，照片里有近景也有远景。",
+                extractedText = "AI预整理：长江大桥右幅伸缩缝附近疑似桥面铺装破损，关联3张照片；建议与第2包合并为同一问题组。",
+                reportText = "长江大桥右幅伸缩缝附近桥面铺装存在局部破损及松散现象，建议纳入重点复核并评估行车舒适性影响。",
+                createdLabel = "李工 · 09:42 · 离线待同步",
+                statusText = "疑似合并",
+            ),
+            QuickCaptureSegment(
+                id = 7002,
+                projectId = 201,
+                bridgeId = 101,
+                sequence = 2,
+                mediaItems = listOf(samplePhoto("q7002-1"), samplePhoto("q7002-2")),
+                voiceText = "补充刚才桥面伸缩缝那个位置，裂开的地方旁边还有渗水痕迹，编号我不确定，应该还是右幅靠近第二跨。",
+                extractedText = "AI预整理：疑似补充第1包，同属长江大桥右幅伸缩缝附近；包含渗水痕迹，位置置信度中等。",
+                reportText = "同一伸缩缝区域除铺装破损外，局部可见渗水痕迹，建议结合现场复核确认病害范围。",
+                createdLabel = "李工 · 09:51 · 离线待同步",
+                statusText = "疑似合并",
+            ),
+            QuickCaptureSegment(
+                id = 7003,
+                projectId = 201,
+                bridgeId = 101,
+                sequence = 3,
+                mediaItems = listOf(samplePhoto("q7003-1"), samplePhoto("q7003-2"), samplePhoto("q7003-3"), samplePhoto("q7003-4")),
+                voiceText = "桥墩下面有泛白和渗水，我拍了几张近景，具体是几号墩记不太清楚，需要回去看远景照片。",
+                extractedText = "AI预整理：长江大桥下部结构疑似墩身渗水泛白；构件编号不明确，建议组长标记需补采远景定位。",
+                reportText = "下部结构局部存在渗水泛白迹象，当前构件编号尚不明确，建议补充远景定位照片后再纳入报告。",
+                createdLabel = "张三 · 10:18 · 已同步",
+                statusText = "需补采",
+            ),
+            QuickCaptureSegment(
+                id = 7004,
+                projectId = 204,
+                bridgeId = 104,
+                sequence = 1,
+                mediaItems = listOf(samplePhoto("q7004-1"), samplePhoto("q7004-2")),
+                voiceText = "海湾跨线桥箱梁腹板这里有一条裂缝，长度大概一米多，旁边有旧修补痕迹。",
+                extractedText = "AI预整理：海湾跨线桥箱梁腹板疑似纵向裂缝，位置描述较清楚，可转为报告候选项。",
+                reportText = "箱梁腹板局部存在裂缝并伴随既有修补痕迹，建议进行裂缝宽度复测并纳入本轮复核结论。",
+                createdLabel = "李工 · 11:06 · 已同步",
+                statusText = "可入报告",
+            ),
+            QuickCaptureSegment(
+                id = 7005,
+                projectId = 205,
+                bridgeId = 105,
+                sequence = 1,
+                mediaItems = listOf(samplePhoto("q7005-1")),
+                voiceText = "城区高架桥排水口附近堵塞，雨水排不出去，旁边有潮湿印。",
+                extractedText = "AI预整理：城区高架桥排水口疑似堵塞并伴随潮湿痕迹，建议转入汛前排查问题组。",
+                reportText = "排水口附近存在堵塞及潮湿痕迹，建议汛前完成清疏并检查接口密封情况。",
+                createdLabel = "张三 · 14:20 · 离线待同步",
+                statusText = "AI待整理",
             ),
         )
 

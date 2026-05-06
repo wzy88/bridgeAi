@@ -51,7 +51,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Assignment
+import androidx.compose.material.icons.automirrored.filled.Assignment
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -59,7 +60,6 @@ import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Person
@@ -125,6 +125,7 @@ import com.bridgeai.app.data.ComponentStatus
 import com.bridgeai.app.data.ComponentTask
 import com.bridgeai.app.data.MediaType
 import com.bridgeai.app.data.ProjectItem
+import com.bridgeai.app.data.QuickCaptureSegment
 import com.bridgeai.app.data.ReportItem
 import com.bridgeai.app.ui.theme.AppBackground
 import com.bridgeai.app.ui.theme.BorderGray
@@ -186,10 +187,9 @@ fun BridgeAiApp() {
             ) {
                 composable(TabRoute.Tasks.route) {
                     if (activeRole == AppRole.Member) {
-                        FieldQuickTasksScreen(
+                        FieldQuickWorkbenchScreen(
                             viewModel = viewModel,
-                            onQuickCapture = { componentId -> navController.navigate("component/$componentId/quick") },
-                            onProjectClick = { navController.navigate("project/$it") },
+                            onOpenPackages = { projectId -> navController.navigate("quick-packages/$projectId") },
                         )
                     } else {
                         TasksScreen(
@@ -199,15 +199,23 @@ fun BridgeAiApp() {
                     }
                 }
                 composable(TabRoute.Bridges.route) {
-                    BridgesScreen(
-                        viewModel = viewModel,
-                        onBridgeClick = { navController.navigate("bridge/$it") },
-                        onQuickInspect = { bridgeId ->
-                            viewModel.projects.firstOrNull { it.bridgeId == bridgeId }?.let {
-                                navController.navigate("project/${it.id}")
-                            }
-                        },
-                    )
+                    if (activeRole == AppRole.Leader) {
+                        LeaderMaterialPackagesScreen(
+                            viewModel = viewModel,
+                            onOpenPackages = { projectId -> navController.navigate("quick-packages/$projectId") },
+                            onOpenProject = { projectId -> navController.navigate("project/$projectId") },
+                        )
+                    } else {
+                        BridgesScreen(
+                            viewModel = viewModel,
+                            onBridgeClick = { navController.navigate("bridge/$it") },
+                            onQuickInspect = { bridgeId ->
+                                viewModel.projects.firstOrNull { it.bridgeId == bridgeId }?.let {
+                                    navController.navigate("project/${it.id}")
+                                }
+                            },
+                        )
+                    }
                 }
                 composable(TabRoute.Reports.route) {
                     ReportsScreen(
@@ -221,6 +229,34 @@ fun BridgeAiApp() {
                         onSwitchRole = viewModel::resetRoleSelection,
                         onSyncClick = { navController.navigate("sync") },
                     )
+                }
+                composable("quick-packages/{projectId}") { backStackEntry ->
+                    val projectId = backStackEntry.arguments?.getString("projectId")?.toLongOrNull()
+                    if (projectId == null) {
+                        InvalidRouteScreen(title = "物料包", message = "任务参数无效，请返回上一页重试。", onBack = { navController.popBackStack() })
+                    } else {
+                        QuickPackageListScreen(
+                            viewModel = viewModel,
+                            projectId = projectId,
+                            onBack = { navController.popBackStack() },
+                            onOpenSegment = { segmentId -> navController.navigate("quick-package/$segmentId") },
+                        )
+                    }
+                }
+                composable("quick-package/{segmentId}") { backStackEntry ->
+                    val segmentId = backStackEntry.arguments?.getString("segmentId")?.toLongOrNull()
+                    if (segmentId == null) {
+                        InvalidRouteScreen(title = "物料包详情", message = "物料包参数无效，请返回上一页重试。", onBack = { navController.popBackStack() })
+                    } else {
+                        QuickPackageDetailScreen(
+                            viewModel = viewModel,
+                            segmentId = segmentId,
+                            onBack = { navController.popBackStack() },
+                            onSupplement = {
+                                navController.popBackStack(TabRoute.Tasks.route, inclusive = false)
+                            },
+                        )
+                    }
                 }
                 composable("project/{projectId}") { backStackEntry ->
                     val projectId = backStackEntry.arguments?.getString("projectId")?.toLongOrNull()
@@ -402,10 +438,15 @@ private fun BottomBar(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val tabs = listOf(
-                Triple(TabRoute.Tasks.route, Icons.Default.CameraAlt, if (activeRole == AppRole.Member) "极速采集" else TabRoute.Tasks.label),
-                Triple(TabRoute.Bridges.route, Icons.Default.Layers, TabRoute.Bridges.label),
-                Triple(TabRoute.Reports.route, Icons.Default.Description, TabRoute.Reports.label),
+            val tabs = if (activeRole == AppRole.Member) {
+                listOf(
+                    Triple(TabRoute.Tasks.route, Icons.Default.CameraAlt, "采集"),
+                    Triple(TabRoute.Profile.route, Icons.Default.Person, TabRoute.Profile.label),
+                )
+            } else listOf(
+                Triple(TabRoute.Tasks.route, Icons.Default.CameraAlt, "任务"),
+                Triple(TabRoute.Bridges.route, Icons.Default.Layers, "物料包"),
+                Triple(TabRoute.Reports.route, Icons.Default.Description, "报告"),
                 Triple(TabRoute.Profile.route, Icons.Default.Person, TabRoute.Profile.label),
             )
             tabs.forEach { (route, icon, label) ->
@@ -465,7 +506,7 @@ private fun RoleSelectionScreen(
                     title = "组长",
                     subtitle = "标准检测流程，适合分配任务、复核结果、生成报告。",
                     primaryAction = "进入标准检测",
-                    icon = Icons.Default.Assignment,
+                    icon = Icons.AutoMirrored.Filled.Assignment,
                     accent = BridgeBlue,
                     onClick = { onRoleSelected(AppRole.Leader) },
                 )
@@ -609,9 +650,10 @@ private fun SectionCard(
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.8.dp),
+        border = BorderStroke(1.dp, BorderGray.copy(alpha = 0.68f)),
     ) {
         Column(modifier = Modifier.padding(16.dp), content = content)
     }
@@ -625,7 +667,7 @@ private fun StatusChip(text: String, color: Color, background: Color) {
             .background(background)
             .padding(horizontal = 10.dp, vertical = 5.dp),
     ) {
-        Text(text = text, color = color, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text(text = text, color = color, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
     }
 }
 
@@ -675,15 +717,30 @@ private fun TasksScreen(
             else -> true
         }
     }
+    val activeProjects = viewModel.projects.count { it.projectStatus == "in_progress" }
+    val pendingPackages = viewModel.quickCaptureSegments.count { !it.voided && it.statusText != "可入报告" }
+    val draftReports = viewModel.reports.count { it.reportStatus == "draft" }
     Column(modifier = Modifier.fillMaxSize().background(AppBackground)) {
-        BlueTopBar(title = "AI检测", compact = true)
+        BlueTopBar(title = "任务", compact = true)
         LazyColumn(
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                CompactTipStrip("优先处理检测中项目，保持“采集 -> 识别 -> 复核”连续推进。")
+                SectionCard {
+                    Text("组长工作台", color = CardText, fontWeight = FontWeight.Bold, fontSize = 21.sp)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text("看任务进度、人员采集状态和报告产出，不直接承担现场采集。", color = SubtleText, fontSize = 13.sp, lineHeight = 20.sp)
+                    Spacer(modifier = Modifier.height(14.dp))
+                    SummaryMetricGrid(
+                        metrics = listOf(
+                            "在检项目" to activeProjects.toString(),
+                            "待整理包" to pendingPackages.toString(),
+                            "报告草稿" to draftReports.toString(),
+                        ),
+                    )
+                }
             }
             stickyHeader {
                 StickyListHeaderCard {
@@ -713,6 +770,8 @@ private fun TasksScreen(
             items(filteredProjects) { project ->
                 val bridge = viewModel.getBridge(project.bridgeId)
                 val progress = viewModel.projectProgress(project.id)
+                val projectPackages = viewModel.getQuickCaptureSegments(project.id)
+                val teamMembers = viewModel.getProjectMembers(project.id)
                 SectionCard(
                     modifier = Modifier.clickable { onProjectClick(project.id) },
                 ) {
@@ -757,7 +816,7 @@ private fun TasksScreen(
                         metrics = listOf(
                             "总构件" to progress.total.toString(),
                             "已采集" to progress.collected.toString(),
-                            "已完成" to progress.completed.toString(),
+                            "物料包" to projectPackages.count { !it.voided }.toString(),
                         ),
                     )
                     Spacer(modifier = Modifier.height(14.dp))
@@ -778,24 +837,33 @@ private fun TasksScreen(
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        "负责人：${project.leaderName} · ${project.startDate} - ${project.endDate}",
+                        "负责人：${project.leaderName} · 执行人员 ${teamMembers.count { it.roleLabel.contains("检测") }} 人 · ${project.startDate} - ${project.endDate}",
                         color = SubtleText,
                         fontSize = 12.sp,
                     )
                     Spacer(modifier = Modifier.height(12.dp))
-                    Button(
-                        onClick = { onProjectClick(project.id) },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = BridgeBlue),
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(LightBlue.copy(alpha = 0.52f))
+                            .clickable { onProjectClick(project.id) }
+                            .padding(horizontal = 12.dp, vertical = 11.dp),
                     ) {
-                        Text(
-                            when (project.projectStatus) {
-                                "completed" -> "查看检测结果"
-                                "in_progress" -> "继续检测"
-                                else -> "进入项目"
-                            },
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                when (project.projectStatus) {
+                                    "completed" -> "查看检测结果"
+                                    "in_progress" -> "查看进度与分配"
+                                    else -> "分配任务"
+                                },
+                                color = BridgeBlue,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Spacer(modifier = Modifier.weight(1f))
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = BridgeBlue, modifier = Modifier.size(20.dp))
+                        }
                     }
                 }
             }
@@ -804,21 +872,461 @@ private fun TasksScreen(
 }
 
 @Composable
-private fun FieldQuickTasksScreen(
+private fun FieldQuickWorkbenchScreen(
     viewModel: BridgeAiViewModel,
-    onQuickCapture: (Long) -> Unit,
-    onProjectClick: (Long) -> Unit,
+    onOpenPackages: (Long) -> Unit,
 ) {
-    val myComponents = viewModel.components
+    val context = LocalContext.current
+    val assignedProjects = viewModel.components
         .filter { it.responsibleUserId == viewModel.currentUser.id }
-        .sortedWith(
-            compareBy<ComponentTask> { it.status == ComponentStatus.Completed }
-                .thenBy { it.projectId }
-                .thenBy { it.number },
+        .mapNotNull { viewModel.getProject(it.projectId) }
+        .distinctBy { it.id }
+    val availableProjects = assignedProjects.ifEmpty { viewModel.projects.take(1) }
+    var selectedProjectId by rememberSaveable { mutableStateOf<Long?>(null) }
+    val selectedProject = selectedProjectId?.let { id -> availableProjects.firstOrNull { it.id == id } }
+    val selectedBridge = selectedProject?.let { viewModel.getBridge(it.bridgeId) }
+    val pendingMedia = remember { mutableStateListOf<ComponentMedia>() }
+    var voiceText by rememberSaveable(selectedProjectId ?: -1L) { mutableStateOf("") }
+    var extractedText by rememberSaveable(selectedProjectId ?: -1L) { mutableStateOf("") }
+    var reportText by rememberSaveable(selectedProjectId ?: -1L) { mutableStateOf("") }
+    var voiceRound by rememberSaveable(selectedProjectId ?: -1L) { mutableStateOf(0) }
+    val savedSegments = selectedProject?.let { viewModel.getQuickCaptureSegments(it.id) }.orEmpty()
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview(),
+    ) { bitmap: Bitmap? ->
+        val fileUri = bitmap?.let { saveBitmapToCache(context, it) }
+        if (fileUri != null) {
+            pendingMedia.add(ComponentMedia("field-photo-${System.nanoTime()}", fileUri.toString(), MediaType.Photo))
+        }
+    }
+
+    val imagePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 12),
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            pendingMedia.addAll(uris.map { ComponentMedia("field-import-${System.nanoTime()}-${it.hashCode()}", it.toString(), MediaType.Photo) })
+        }
+    }
+
+    if (selectedProject == null || selectedBridge == null) {
+        QuickProjectPickerScreen(
+            viewModel = viewModel,
+            projects = availableProjects,
+            onSelectProject = { project ->
+                selectedProjectId = project.id
+                pendingMedia.clear()
+                voiceText = ""
+                extractedText = ""
+                reportText = ""
+                voiceRound = 0
+            },
         )
-    val activeComponents = myComponents.filter { it.status != ComponentStatus.Completed }
+        return
+    }
+
+    val addVoiceNote = {
+        voiceRound += 1
+        voiceText = fieldVoiceTranscript(selectedBridge.bridgeName, selectedProject.projectType, voiceRound)
+        extractedText = fieldExtractedText(selectedBridge.bridgeName, voiceRound)
+        reportText = fieldReportText(selectedBridge.bridgeName, voiceRound)
+        Toast.makeText(context, "已生成一段模拟语音识别", Toast.LENGTH_SHORT).show()
+    }
+    val saveCurrentPackage = {
+        val saved = viewModel.saveQuickCaptureSegment(
+            projectId = selectedProject.id,
+            mediaItems = pendingMedia.toList(),
+            voiceText = voiceText,
+            extractedText = extractedText.ifBlank { "AI待整理：照片与语音已绑定，等待联网或人工触发后识别位置、病害和数量。" },
+            reportText = reportText.ifBlank { "本段素材已完成离线留存，待AI整理后进入报告候选记录。" },
+        )
+        if (saved) {
+            pendingMedia.clear()
+            voiceText = ""
+            extractedText = ""
+            reportText = ""
+            Toast.makeText(context, "本包已保存，可以继续采下一包", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, "请至少拍照或补充语音备注", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize().background(AppBackground)) {
-        BlueTopBar(title = "极速采集", compact = true)
+        BlueTopBar(title = "采集", compact = true)
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                SectionCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(selectedBridge.bridgeName, color = CardText, fontWeight = FontWeight.Bold, fontSize = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("${selectedProject.projectType} · 今天只采当前桥梁", color = SubtleText, fontSize = 13.sp)
+                        }
+                        TextButton(onClick = {
+                            selectedProjectId = null
+                            pendingMedia.clear()
+                            voiceText = ""
+                            extractedText = ""
+                            reportText = ""
+                            voiceRound = 0
+                        }) {
+                            Text("换任务")
+                        }
+                    }
+                }
+            }
+            item {
+                SectionCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("新建物料包", color = CardText, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("拍照和说话是主动作；系统会先暂存，保存只是明确完成这一包。", color = SubtleText, fontSize = 13.sp, lineHeight = 20.sp)
+                        }
+                        StatusChip(
+                            if (pendingMedia.isEmpty() && voiceText.isBlank()) "空包" else "${pendingMedia.size}图 · ${if (voiceText.isBlank()) 0 else 1}语音",
+                            BridgeBlue,
+                            LightBlue.copy(alpha = 0.7f),
+                        )
+                    }
+                    if (pendingMedia.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            items(pendingMedia, key = { it.id }) { media ->
+                                QuickMediaThumb(
+                                    media = media,
+                                    label = "P${pendingMedia.indexOf(media) + 1}",
+                                    onRemove = { pendingMedia.remove(media) },
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(14.dp))
+                    DialogSectionTitle("语音文字")
+                    DialogHighlightBlock(voiceText.ifBlank { "还没有语音。现场人员可以直接说：照片编号、位置、看到的问题、补充判断。系统先完整保存原话。" })
+                    if (extractedText.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        DialogSectionTitle("AI预整理")
+                        DialogHighlightBlock(extractedText, accent = true)
+                    }
+                }
+            }
+            item {
+                SectionCard(
+                    modifier = Modifier.clickable { onOpenPackages(selectedProject.id) },
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("已保存物料包", color = CardText, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("查看今天采回来的照片和语音包，不在这里改原包。", color = SubtleText, fontSize = 13.sp)
+                        }
+                        StatusChip("${savedSegments.count { !it.voided }} 包", BridgeBlue, LightBlue.copy(alpha = 0.7f))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = BridgeBlue)
+                    }
+                    if (savedSegments.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(savedSegments.first().extractedText, color = SubtleText, fontSize = 12.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
+        QuickCollectActionDock(
+            mediaCount = pendingMedia.size,
+            hasVoice = voiceText.isNotBlank(),
+            canSave = pendingMedia.isNotEmpty() || voiceText.isNotBlank(),
+            onCamera = { cameraLauncher.launch(null) },
+            onPickImage = { imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+            onVoice = addVoiceNote,
+            onSave = saveCurrentPackage,
+        )
+    }
+}
+
+@Composable
+private fun QuickProjectPickerScreen(
+    viewModel: BridgeAiViewModel,
+    projects: List<ProjectItem>,
+    onSelectProject: (ProjectItem) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize().background(AppBackground)) {
+        BlueTopBar(title = "采集", compact = true)
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                SectionCard {
+                    Text("今天要去哪座桥？", color = CardText, fontWeight = FontWeight.Bold, fontSize = 21.sp)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text("先选当前现场。到桥上以后，只需要拍照、说话、保存物料包。", color = SubtleText, fontSize = 13.sp, lineHeight = 20.sp)
+                }
+            }
+            items(projects) { project ->
+                val bridge = viewModel.getBridge(project.bridgeId)
+                val packageCount = viewModel.getQuickCaptureSegments(project.id).count { !it.voided }
+                SectionCard(modifier = Modifier.clickable { onSelectProject(project) }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(46.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(BridgeBlue.copy(alpha = 0.12f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Default.CameraAlt, contentDescription = null, tint = BridgeBlue)
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(bridge?.bridgeName ?: project.projectName, color = CardText, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("${project.projectType} · ${project.startDate} 至 ${project.endDate}", color = SubtleText, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        StatusChip(if (packageCount > 0) "${packageCount}包" else "开始", BridgeBlue, LightBlue.copy(alpha = 0.7f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickCaptureActionButton(
+    label: String,
+    icon: ImageVector,
+    tint: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .height(82.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(tint.copy(alpha = 0.1f))
+            .border(1.dp, tint.copy(alpha = 0.18f), RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .padding(10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(26.dp))
+            Spacer(modifier = Modifier.height(7.dp))
+            Text(label, color = CardText, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
+@Composable
+private fun QuickCollectActionDock(
+    mediaCount: Int,
+    hasVoice: Boolean,
+    canSave: Boolean,
+    onCamera: () -> Unit,
+    onPickImage: () -> Unit,
+    onVoice: () -> Unit,
+    onSave: () -> Unit,
+) {
+    Surface(
+        color = Color.White,
+        shadowElevation = 10.dp,
+        border = BorderStroke(1.dp, BorderGray.copy(alpha = 0.8f)),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("本包：${mediaCount}张照片 · ${if (hasVoice) "已说话" else "未说话"}", color = SubtleText, fontSize = 12.sp)
+                Spacer(modifier = Modifier.weight(1f))
+                TextButton(onClick = onPickImage) {
+                    Text("选照片")
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = onCamera,
+                    modifier = Modifier.weight(1f).height(56.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = SuccessGreen),
+                ) {
+                    Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(22.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("拍照")
+                }
+                Button(
+                    onClick = onVoice,
+                    modifier = Modifier.weight(1.18f).height(56.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = BridgeBlue),
+                ) {
+                    Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(24.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(if (hasVoice) "继续说" else "说话")
+                }
+                OutlinedButton(
+                    onClick = onSave,
+                    enabled = canSave,
+                    modifier = Modifier.width(72.dp).height(56.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(1.dp, if (canSave) SuccessGreen.copy(alpha = 0.5f) else BorderGray),
+                ) {
+                    Icon(Icons.Default.Check, contentDescription = "保存", tint = if (canSave) SuccessGreen else SubtleText)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickMediaThumb(
+    media: ComponentMedia,
+    label: String,
+    onRemove: (() -> Unit)? = null,
+) {
+    Box {
+        AsyncImage(
+            model = media.uri,
+            contentDescription = null,
+            modifier = Modifier
+                .size(78.dp)
+                .clip(RoundedCornerShape(14.dp)),
+            contentScale = ContentScale.Crop,
+        )
+        StatusChip(
+            text = label,
+            color = Color.White,
+            background = Color.Black.copy(alpha = 0.48f),
+        )
+        if (onRemove != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(5.dp)
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.58f))
+                    .clickable { onRemove() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("×", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickPackageListScreen(
+    viewModel: BridgeAiViewModel,
+    projectId: Long,
+    onBack: () -> Unit,
+    onOpenSegment: (Long) -> Unit,
+) {
+    val project = viewModel.getProject(projectId)
+    val bridge = project?.let { viewModel.getBridge(it.bridgeId) }
+    if (project == null || bridge == null) {
+        InvalidRouteScreen(title = "物料包", message = "任务数据不存在或已被移除。", onBack = onBack)
+        return
+    }
+    val segments = viewModel.getQuickCaptureSegments(projectId)
+    Column(modifier = Modifier.fillMaxSize().background(AppBackground)) {
+        BlueTopBar(title = "物料包", onBack = onBack)
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                SectionCard {
+                    Text(bridge.bridgeName, color = CardText, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("原始物料包只做查看和作废；补充内容请新采一包，后续由 AI 和组长合并。", color = SubtleText, fontSize = 13.sp, lineHeight = 20.sp)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    SummaryMetricGrid(
+                        metrics = listOf(
+                            "全部包" to segments.size.toString(),
+                            "有效包" to segments.count { !it.voided }.toString(),
+                            "待整理" to segments.count { !it.voided && it.statusText == "AI待整理" }.toString(),
+                        ),
+                    )
+                }
+            }
+            if (segments.isEmpty()) {
+                item {
+                    CompactTipStrip("还没有保存物料包。返回采集页，拍照或说一段话后点击保存即可生成。")
+                }
+            } else {
+                items(segments, key = { it.id }) { segment ->
+                    QuickPackageListCard(
+                        segment = segment,
+                        onClick = { onOpenSegment(segment.id) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickPackageListCard(
+    segment: QuickCaptureSegment,
+    onClick: () -> Unit,
+) {
+    SectionCard(modifier = Modifier.clickable(onClick = onClick)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("物料包 ${segment.sequence}", color = CardText, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(segment.createdLabel, color = SubtleText, fontSize = 13.sp)
+            }
+            StatusChip(
+                text = segment.statusText,
+                color = if (segment.voided) SubtleText else WarningOrange,
+                background = if (segment.voided) SubtleText.copy(alpha = 0.12f) else WarningOrange.copy(alpha = 0.12f),
+            )
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatusChip("照片 ${segment.mediaItems.size}", BridgeBlue, LightBlue.copy(alpha = 0.7f))
+            StatusChip("语音 1 段", SuccessGreen, SuccessGreen.copy(alpha = 0.12f))
+            StatusChip(if (segment.voided) "不参与合并" else "等待合并", SubtleText, SubtleText.copy(alpha = 0.12f))
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            segment.extractedText,
+            color = CardText,
+            fontSize = 13.sp,
+            lineHeight = 20.sp,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun QuickPackageDetailScreen(
+    viewModel: BridgeAiViewModel,
+    segmentId: Long,
+    onBack: () -> Unit,
+    onSupplement: () -> Unit,
+) {
+    val context = LocalContext.current
+    val segment = viewModel.getQuickCaptureSegment(segmentId)
+    if (segment == null) {
+        InvalidRouteScreen(title = "物料包详情", message = "物料包不存在或已被移除。", onBack = onBack)
+        return
+    }
+    val bridge = viewModel.getBridge(segment.bridgeId)
+    Column(modifier = Modifier.fillMaxSize().background(AppBackground)) {
+        BlueTopBar(title = "物料包 ${segment.sequence}", onBack = onBack)
         LazyColumn(
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(16.dp),
@@ -827,92 +1335,286 @@ private fun FieldQuickTasksScreen(
             item {
                 SectionCard {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(54.dp)
-                                .clip(CircleShape)
-                                .background(SuccessGreen.copy(alpha = 0.12f)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(Icons.Default.Mic, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(30.dp))
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("${viewModel.currentUser.realName}的采集任务", color = CardText, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                            Text(bridge?.bridgeName ?: "采集任务", color = CardText, fontWeight = FontWeight.Bold, fontSize = 19.sp)
                             Spacer(modifier = Modifier.height(4.dp))
-                            Text("先拍照，再说情况；系统自动把照片和语音绑定成采集批次。", color = SubtleText, fontSize = 13.sp, lineHeight = 20.sp)
+                            Text(segment.createdLabel, color = SubtleText, fontSize = 13.sp)
+                        }
+                        StatusChip(
+                            text = segment.statusText,
+                            color = if (segment.voided) SubtleText else WarningOrange,
+                            background = if (segment.voided) SubtleText.copy(alpha = 0.12f) else WarningOrange.copy(alpha = 0.12f),
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("原始包不直接编辑。需要补充时新建一个补充包，后续自动或人工归并。", color = SubtleText, fontSize = 13.sp, lineHeight = 20.sp)
+                }
+            }
+            if (segment.mediaItems.isNotEmpty()) {
+                item {
+                    SectionCard {
+                        Text("照片", color = CardText, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            items(segment.mediaItems, key = { it.id }) { media ->
+                                QuickMediaThumb(media = media, label = "P${segment.mediaItems.indexOf(media) + 1}")
+                            }
                         }
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
+                }
+            }
+            item {
+                SectionCard {
+                    DialogSectionTitle("原始口述")
+                    DialogHighlightBlock(segment.voiceText.ifBlank { "本包没有语音内容。" })
+                    Spacer(modifier = Modifier.height(14.dp))
+                    DialogSectionTitle("AI预整理")
+                    DialogHighlightBlock(segment.extractedText, accent = true)
+                    Spacer(modifier = Modifier.height(14.dp))
+                    DialogSectionTitle("报告候选描述")
+                    DialogHighlightBlock(segment.reportText, accent = true)
+                }
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = {
+                            viewModel.voidQuickCaptureSegment(segment.id)
+                            Toast.makeText(context, "已作废此物料包，原始记录仍保留", Toast.LENGTH_SHORT).show()
+                            onBack()
+                        },
+                        enabled = !segment.voided,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(14.dp),
+                    ) {
+                        Text("作废此包")
+                    }
+                    Button(
+                        onClick = {
+                            Toast.makeText(context, "回到采集页，新建一包作为补充", Toast.LENGTH_SHORT).show()
+                            onSupplement()
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = SuccessGreen),
+                    ) {
+                        Text("补充一包")
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun fieldVoiceTranscript(
+    bridgeName: String,
+    projectType: String,
+    round: Int,
+): String = when (round % 3) {
+    1 -> "照片编号这一组先记为A$round，$bridgeName 右幅桥面靠近伸缩缝的位置有破损，边缘有松散，车辆经过的时候有明显跳车，建议重点看一下。"
+    2 -> "这一段是在$bridgeName 第二跨下面拍的，靠近墩柱位置有渗水和泛白，裂缝不算特别宽，但是长度比较明显，我又补了几张远景方便定位。"
+    else -> "$projectType 现场补充一组照片，这里疑似支座周边有老化和积水，具体构件编号我不确定，后面让AI根据照片和定位一起判断。"
+}
+
+private fun fieldExtractedText(
+    bridgeName: String,
+    round: Int,
+): String = when (round % 3) {
+    1 -> "AI预整理：$bridgeName，疑似桥面铺装/伸缩缝附近破损；关键词：破损、松散、跳车；位置需要结合照片编号A${round}确认。"
+    2 -> "AI预整理：$bridgeName，疑似墩柱或梁底附近渗水泛白，并伴随纵向裂缝；建议进入待确认列表后补充构件编号。"
+    else -> "AI预整理：$bridgeName，疑似支座区域老化、积水；当前口述位置不完整，建议通过照片远景和GPS补全定位。"
+}
+
+private fun fieldReportText(
+    bridgeName: String,
+    round: Int,
+): String = when (round % 3) {
+    1 -> "$bridgeName 右幅伸缩缝附近桥面铺装存在局部破损及松散现象，现场反馈车辆通行存在跳车感，建议列入后续重点复核。"
+    2 -> "$bridgeName 第二跨下部结构附近可见渗水、泛白及裂缝迹象，建议结合近景与远景照片进一步确认病害范围。"
+    else -> "$bridgeName 支座周边疑似存在老化及积水情况，需结合现场照片进一步核定构件位置与处置优先级。"
+}
+
+@Composable
+private fun LeaderMaterialPackagesScreen(
+    viewModel: BridgeAiViewModel,
+    onOpenPackages: (Long) -> Unit,
+    onOpenProject: (Long) -> Unit,
+) {
+    val context = LocalContext.current
+    var packageFilter by rememberSaveable { mutableStateOf("全部") }
+    val allSegments = viewModel.getQuickCaptureSegments()
+    val filteredSegments = allSegments.filter { segment ->
+        when (packageFilter) {
+            "待整理" -> !segment.voided && segment.statusText == "AI待整理"
+            "疑似合并" -> !segment.voided && segment.statusText == "疑似合并"
+            "需补采" -> !segment.voided && segment.statusText == "需补采"
+            "可入报告" -> !segment.voided && segment.statusText == "可入报告"
+            "已作废" -> segment.voided
+            else -> true
+        }
+    }
+    val grouped = filteredSegments.groupBy { it.projectId }
+    Column(modifier = Modifier.fillMaxSize().background(AppBackground)) {
+        BlueTopBar(title = "物料包", compact = true)
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                SectionCard {
+                    Text("采集物料工作台", color = CardText, fontWeight = FontWeight.Bold, fontSize = 21.sp)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text("一级只看项目级结论。点进项目后再看每个原始物料包。", color = SubtleText, fontSize = 13.sp, lineHeight = 20.sp)
+                    Spacer(modifier = Modifier.height(14.dp))
                     SummaryMetricGrid(
                         metrics = listOf(
-                            "待采集" to activeComponents.count { it.status == ComponentStatus.Pending }.toString(),
-                            "已拍照" to activeComponents.count { it.mediaItems.isNotEmpty() }.toString(),
-                            "待确认" to activeComponents.count { it.status == ComponentStatus.AiDone }.toString(),
+                            "原始包" to allSegments.size.toString(),
+                            "疑似合并" to allSegments.count { !it.voided && it.statusText == "疑似合并" }.toString(),
+                            "需补采" to allSegments.count { !it.voided && it.statusText == "需补采" }.toString(),
                         ),
                     )
                 }
             }
-            item {
-                CompactTipStrip("组员默认进入这个模式；需要查看完整项目时，可以从卡片里的“标准查看”进入原流程。")
+            stickyHeader {
+                StickyListHeaderCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("共 ${grouped.size} 个项目", color = CardText, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Spacer(modifier = Modifier.weight(1f))
+                        Text("处理状态", color = SubtleText, fontSize = 12.sp)
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    FilterRow(
+                        title = "",
+                        options = listOf("全部", "待整理", "疑似合并", "需补采", "可入报告", "已作废"),
+                        selected = packageFilter,
+                        onSelected = { packageFilter = it },
+                    )
+                }
             }
-            if (myComponents.isEmpty()) {
+            if (grouped.isEmpty()) {
                 item {
                     SectionCard {
-                        Text("暂无分配给你的采集项", color = CardText, fontWeight = FontWeight.Bold)
+                        Text("当前筛选下暂无物料包", color = CardText, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(6.dp))
-                        Text("组长分配任务后，这里会只展示你需要处理的检测项。", color = SubtleText, fontSize = 13.sp)
+                        Text("可以切换状态，或等待组员完成新的现场采集。", color = SubtleText, fontSize = 13.sp)
                     }
                 }
             }
-            items(myComponents) { component ->
-                val project = viewModel.getProject(component.projectId)
-                val bridge = project?.let { viewModel.getBridge(it.bridgeId) }
-                SectionCard {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("${component.type} · ${component.number}", color = CardText, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text("${bridge?.bridgeName ?: "桥梁"} · ${project?.projectType ?: "检测任务"}", color = SubtleText, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        ComponentStatusChip(component.status)
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StatusChip("照片 ${component.mediaItems.count { it.type == MediaType.Photo }}", BridgeBlue, LightBlue.copy(alpha = 0.7f))
-                        StatusChip("语音备注 1", SuccessGreen, SuccessGreen.copy(alpha = 0.12f))
-                        StatusChip(component.focusDefects.firstOrNull() ?: "待判断", WarningOrange, WarningOrange.copy(alpha = 0.12f))
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        quickCollectSummary(component),
-                        color = CardText,
-                        fontSize = 13.sp,
-                        lineHeight = 20.sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
+            grouped.forEach { (projectId, segments) ->
+                item {
+                    LeaderPackageProjectCard(
+                        viewModel = viewModel,
+                        projectId = projectId,
+                        segments = segments,
+                        onOpenPackages = { onOpenPackages(projectId) },
+                        onOpenProject = { onOpenProject(projectId) },
+                        onConfirmMerge = {
+                            Toast.makeText(context, "已标记为同一问题组，后续进入报告候选", Toast.LENGTH_SHORT).show()
+                        },
                     )
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Button(
-                        onClick = { onQuickCapture(component.id) },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = SuccessGreen),
-                    ) {
-                        Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(if (component.mediaItems.isEmpty()) "开始拍照采集" else "继续补采和备注")
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = { onProjectClick(component.projectId) },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                    ) {
-                        Text("标准查看")
-                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun LeaderPackageProjectCard(
+    viewModel: BridgeAiViewModel,
+    projectId: Long,
+    segments: List<QuickCaptureSegment>,
+    onOpenPackages: () -> Unit,
+    onOpenProject: () -> Unit,
+    onConfirmMerge: () -> Unit,
+) {
+    val project = viewModel.getProject(projectId)
+    val bridge = project?.let { viewModel.getBridge(it.bridgeId) }
+    val validSegments = segments.filter { !it.voided }
+    SectionCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(bridge?.bridgeName ?: project?.projectName ?: "未知任务", color = CardText, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(project?.projectType ?: "采集任务", color = SubtleText, fontSize = 13.sp)
+            }
+            StatusChip("${validSegments.size} 包", BridgeBlue, LightBlue.copy(alpha = 0.7f))
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatusChip("照片 ${validSegments.sumOf { it.mediaItems.size }}", BridgeBlue, LightBlue.copy(alpha = 0.7f))
+            StatusChip("疑似合并 ${validSegments.count { it.statusText == "疑似合并" }}", WarningOrange, WarningOrange.copy(alpha = 0.12f))
+            StatusChip("可入报告 ${validSegments.count { it.statusText == "可入报告" }}", SuccessGreen, SuccessGreen.copy(alpha = 0.12f))
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            validSegments.firstOrNull()?.extractedText ?: "暂无有效物料包。",
+            color = CardText,
+            fontSize = 13.sp,
+            lineHeight = 20.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = onOpenPackages,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(14.dp),
+            ) {
+                Text("看全部包")
+            }
+            Button(
+                onClick = onConfirmMerge,
+                enabled = validSegments.size >= 2,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = BridgeBlue),
+            ) {
+                Text("确认合并")
+            }
+        }
+    }
+}
+
+@Composable
+private fun LeaderPackageSegmentRow(
+    segment: QuickCaptureSegment,
+    onClick: () -> Unit,
+) {
+    SectionCard(modifier = Modifier.clickable(onClick = onClick)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (segment.voided) BorderGray else LightBlue.copy(alpha = 0.72f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Default.Image, contentDescription = null, tint = if (segment.voided) SubtleText else BridgeBlue)
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("物料包 ${segment.sequence} · ${segment.createdLabel}", color = CardText, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(segment.extractedText, color = SubtleText, fontSize = 12.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            StatusChip(
+                text = segment.statusText,
+                color = when {
+                    segment.voided -> SubtleText
+                    segment.statusText == "可入报告" -> SuccessGreen
+                    segment.statusText == "需补采" -> DangerRed
+                    else -> WarningOrange
+                },
+                background = when {
+                    segment.voided -> SubtleText.copy(alpha = 0.12f)
+                    segment.statusText == "可入报告" -> SuccessGreen.copy(alpha = 0.12f)
+                    segment.statusText == "需补采" -> DangerRed.copy(alpha = 0.1f)
+                    else -> WarningOrange.copy(alpha = 0.12f)
+                },
+            )
         }
     }
 }
@@ -1048,7 +1750,19 @@ private fun ReportsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                CompactTipStrip("草稿先复核，再正式上报；关键确认动作尽量留在报告详情页完成。")
+                SectionCard {
+                    Text("报告中心", color = CardText, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                    Spacer(modifier = Modifier.height(5.dp))
+                    Text("这里只看报告状态和最终产出，编辑动作进入详情页完成。", color = SubtleText, fontSize = 13.sp, lineHeight = 20.sp)
+                    Spacer(modifier = Modifier.height(14.dp))
+                    SummaryMetricGrid(
+                        metrics = listOf(
+                            "草稿" to viewModel.reports.count { it.reportStatus == "draft" }.toString(),
+                            "已完成" to viewModel.reports.count { it.reportStatus == "completed" }.toString(),
+                            "已上报" to viewModel.reports.count { it.reportStatus == "reported" }.toString(),
+                        ),
+                    )
+                }
             }
             stickyHeader {
                 StickyListHeaderCard {
@@ -1300,6 +2014,7 @@ private fun ProjectDetailScreen(
     val progress = viewModel.projectProgress(projectId)
     var componentFilter by rememberSaveable(projectId) { mutableStateOf("全部") }
     var showAddDialog by rememberSaveable(projectId) { mutableStateOf(false) }
+    var showBridgeInfoDialog by rememberSaveable(projectId) { mutableStateOf(false) }
     var newCategory by rememberSaveable(projectId) { mutableStateOf("上部结构") }
     var newType by rememberSaveable(projectId) { mutableStateOf("") }
     var newNumber by rememberSaveable(projectId) { mutableStateOf("") }
@@ -1394,6 +2109,30 @@ private fun ProjectDetailScreen(
             )
         }
     }
+    if (showBridgeInfoDialog) {
+        BridgeInfoCorrectionDialog(
+            bridge = bridge,
+            correctionNote = viewModel.getBridgeCorrectionNote(bridge.id),
+            onDismiss = { showBridgeInfoDialog = false },
+            onSave = { totalLength, bridgeWidth, mainSpan, address, maintenanceUnit, note ->
+                val saved = viewModel.updateBridgeCorrection(
+                    bridgeId = bridge.id,
+                    totalLengthText = totalLength,
+                    bridgeWidthText = bridgeWidth,
+                    mainSpanText = mainSpan,
+                    address = address,
+                    maintenanceUnit = maintenanceUnit,
+                    correctionNote = note,
+                )
+                if (saved) {
+                    showBridgeInfoDialog = false
+                    Toast.makeText(context, "桥梁基础信息已更新，报告将使用最新信息", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "桥梁信息保存失败，请稍后重试", Toast.LENGTH_SHORT).show()
+                }
+            },
+        )
+    }
     Column(modifier = Modifier.fillMaxSize().background(AppBackground)) {
         BlueTopBar(
             title = "桥梁检测",
@@ -1420,119 +2159,21 @@ private fun ProjectDetailScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                Card(
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(BridgeBlue, BridgeBlue.copy(alpha = 0.82f)),
-                                )
-                            )
-                            .padding(18.dp),
-                    ) {
-                        Column {
-                            Text(
-                                bridge.bridgeName,
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 22.sp,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text("${bridge.bridgeCode} · ${project.projectType}", color = Color.White.copy(alpha = 0.9f), fontSize = 13.sp)
-                            Spacer(modifier = Modifier.height(16.dp))
-                            HeaderMetricGrid(
-                                metrics = listOf(
-                                    "总构件" to progress.total.toString(),
-                                    "已采集" to progress.collected.toString(),
-                                    "已完成" to progress.completed.toString(),
-                                ),
-                            )
-                        }
-                    }
-                }
+                CompactBridgeHeaderCard(
+                    bridge = bridge,
+                    project = project,
+                    progress = progress,
+                    correctionNote = viewModel.getBridgeCorrectionNote(bridge.id),
+                    onOpenBridgeInfo = { showBridgeInfoDialog = true },
+                )
             }
             item {
-                SectionCard {
-                    Text("项目进度", fontWeight = FontWeight.Bold, color = CardText)
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(10.dp)
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(BorderGray),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth(if (progress.total == 0) 0f else progress.completed.toFloat() / progress.total.toFloat())
-                                .height(10.dp)
-                                .clip(RoundedCornerShape(999.dp))
-                                .background(BridgeBlue),
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(14.dp))
-                    SummaryMetricGrid(
-                        metrics = listOf(
-                            "待检测" to (progress.total - progress.collected).coerceAtLeast(0).toString(),
-                            "已识别" to progress.aiDone.toString(),
-                            "已完成" to progress.completed.toString(),
-                        ),
-                    )
-                    if (projectComponents.any { it.status == ComponentStatus.Collected }) {
-                        Spacer(modifier = Modifier.height(14.dp))
-                        Button(
-                            onClick = { viewModel.runBatchAi(projectId) },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(containerColor = BridgeBlue),
-                            shape = RoundedCornerShape(14.dp),
-                        ) {
-                            Icon(Icons.Default.TaskAlt, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("批量AI识别")
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    OutlinedButton(
-                        onClick = { showAddDialog = true },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(14.dp),
-                    ) {
-                        Text("新增现场检测项")
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        "全量检测项对团队成员可见；负责人仅用于责任区分，不限制现场协作代检。",
-                        color = SubtleText,
-                        fontSize = 12.sp,
-                        lineHeight = 18.sp,
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StatusChip("我负责", BridgeBlue, BridgeBlue.copy(alpha = 0.12f))
-                        StatusChip("他人负责", SubtleText, SubtleText.copy(alpha = 0.12f))
-                        StatusChip("现场新增", WarningOrange, WarningOrange.copy(alpha = 0.12f))
-                        StatusChip("协作代检", SuccessGreen, SuccessGreen.copy(alpha = 0.12f))
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        when {
-                            progress.completed == progress.total && progress.total > 0 -> "当前项目已全部完成，可直接生成报告归档。"
-                            progress.aiDone > progress.completed -> "已有 AI 结果待人工确认，建议优先查看“待复核”检测项。"
-                            progress.collected > progress.aiDone -> "已有素材待识别，可直接点“批量AI识别”。"
-                            else -> "建议先从“待检测”构件开始采集；现场临时发现的问题可随时新增检测项。"
-                        },
-                        color = CardText,
-                        fontSize = 13.sp,
-                        lineHeight = 20.sp,
-                    )
-                }
+                CompactProjectProgressCard(
+                    progress = progress,
+                    hasCollectedPendingAi = projectComponents.any { it.status == ComponentStatus.Collected },
+                    onBatchAi = { viewModel.runBatchAi(projectId) },
+                    onAddComponent = { showAddDialog = true },
+                )
             }
             item {
                 FilterRow(
@@ -1562,71 +2203,311 @@ private fun ProjectDetailScreen(
                     )
                 }
                 items(items) { component ->
-                    SectionCard(
-                        modifier = Modifier.clickable { onComponentClick(component.id, component.mediaItems.isNotEmpty()) },
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "${component.type} · ${component.number}",
-                                    color = CardText,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    component.focusDefects.joinToString(" · "),
-                                    color = SubtleText,
-                                    fontSize = 12.sp,
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    if (component.responsibleUserId == viewModel.currentUser.id) {
-                                        StatusChip("我负责", BridgeBlue, BridgeBlue.copy(alpha = 0.12f))
-                                    } else {
-                                        StatusChip("${component.responsibleName}负责", SubtleText, SubtleText.copy(alpha = 0.12f))
-                                    }
-                                    if (component.isCustom) {
-                                        StatusChip("现场新增", WarningOrange, WarningOrange.copy(alpha = 0.12f))
-                                    }
-                                    if (component.actualInspectorUserId != null && component.actualInspectorUserId != component.responsibleUserId) {
-                                        StatusChip("${component.actualInspectorName}协作", SuccessGreen, SuccessGreen.copy(alpha = 0.12f))
-                                    }
-                                }
-                                if (component.mediaItems.isNotEmpty()) {
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text("已采集 ${component.mediaItems.size} 个素材", color = BridgeBlue, fontSize = 12.sp)
-                                }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    "创建人：${component.createdByName.ifBlank { component.responsibleName }}",
-                                    color = SubtleText,
-                                    fontSize = 12.sp,
-                                )
-                            }
-                            ComponentStatusChip(component.status)
-                        }
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Button(
-                            onClick = { onComponentClick(component.id, component.mediaItems.isNotEmpty()) },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = if (component.status == ComponentStatus.Pending) BridgeBlue else Color(0xFFF7F8FA), contentColor = if (component.status == ComponentStatus.Pending) Color.White else CardText),
-                        ) {
-                            Text(
-                                when (component.status) {
-                                    ComponentStatus.Pending -> "开始检测"
-                                    ComponentStatus.Collected -> "查看素材并识别"
-                                    ComponentStatus.AiDone -> "核对AI结果"
-                                    ComponentStatus.Completed -> "查看结果"
-                                },
-                            )
-                        }
-                    }
+                    CompactDetectionTaskCard(
+                        component = component,
+                        currentUserId = viewModel.currentUser.id,
+                        onClick = { onComponentClick(component.id, component.mediaItems.isNotEmpty()) },
+                    )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CompactBridgeHeaderCard(
+    bridge: BridgeItem,
+    project: ProjectItem,
+    progress: ProjectProgress,
+    correctionNote: String,
+    onOpenBridgeInfo: () -> Unit,
+) {
+    val completionRate = if (progress.total == 0) 0f else progress.completed.toFloat() / progress.total.toFloat()
+    SectionCard {
+        Row(verticalAlignment = Alignment.Top) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    bridge.bridgeName,
+                    color = CardText,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "${bridge.bridgeCode} · ${project.projectType}",
+                    color = SubtleText,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            StatusChip(project.projectStatus.displayProjectStatus(), BridgeBlue, BridgeBlue.copy(alpha = 0.12f))
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(8.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(BorderGray),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(completionRate)
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(BridgeBlue),
+            )
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            CompactMetricPill("总构件", progress.total.toString(), Modifier.weight(1f))
+            CompactMetricPill("已采集", progress.collected.toString(), Modifier.weight(1f))
+            CompactMetricPill("已完成", progress.completed.toString(), Modifier.weight(1f))
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(LightBlue.copy(alpha = 0.55f))
+                .clickable(onClick = onOpenBridgeInfo)
+                .padding(horizontal = 12.dp, vertical = 11.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("桥梁基础信息", color = CardText, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        if (correctionNote.isBlank()) {
+                            "${bridge.totalLength}m · ${bridge.bridgeWidth}m宽 · ${bridge.maintenanceUnit}"
+                        } else {
+                            "已现场修正，报告将使用最新信息"
+                        },
+                        color = SubtleText,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text("查看/修正", color = BridgeBlue, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = BridgeBlue)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactProjectProgressCard(
+    progress: ProjectProgress,
+    hasCollectedPendingAi: Boolean,
+    onBatchAi: () -> Unit,
+    onAddComponent: () -> Unit,
+) {
+    SectionCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("下一步操作", fontWeight = FontWeight.Bold, color = CardText)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    when {
+                        progress.completed == progress.total && progress.total > 0 -> "检测已完成，可以生成报告"
+                        progress.aiDone > progress.completed -> "优先复核 AI 结果"
+                        hasCollectedPendingAi -> "已有素材，可批量识别"
+                        else -> "从待检测构件开始采集"
+                    },
+                    color = SubtleText,
+                    fontSize = 13.sp,
+                )
+            }
+            StatusChip("待检 ${(progress.total - progress.collected).coerceAtLeast(0)}", WarningOrange, WarningOrange.copy(alpha = 0.12f))
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = onBatchAi,
+                enabled = hasCollectedPendingAi,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(containerColor = BridgeBlue),
+                shape = RoundedCornerShape(14.dp),
+            ) {
+                Icon(Icons.Default.TaskAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("批量AI")
+            }
+            OutlinedButton(
+                onClick = onAddComponent,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(14.dp),
+            ) {
+                Text("新增检测项")
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactDetectionTaskCard(
+    component: ComponentTask,
+    currentUserId: Long,
+    onClick: () -> Unit,
+) {
+    SectionCard(modifier = Modifier.clickable(onClick = onClick)) {
+        Row(verticalAlignment = Alignment.Top) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "${component.type} · ${component.number}",
+                    color = CardText,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    component.focusDefects.joinToString(" · "),
+                    color = SubtleText,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    StatusChip(
+                        text = if (component.responsibleUserId == currentUserId) "我负责" else component.responsibleName,
+                        color = if (component.responsibleUserId == currentUserId) BridgeBlue else SubtleText,
+                        background = if (component.responsibleUserId == currentUserId) BridgeBlue.copy(alpha = 0.12f) else SubtleText.copy(alpha = 0.12f),
+                    )
+                    if (component.mediaItems.isNotEmpty()) {
+                        StatusChip("素材 ${component.mediaItems.size}", SuccessGreen, SuccessGreen.copy(alpha = 0.12f))
+                    }
+                    if (component.isCustom) {
+                        StatusChip("现场新增", WarningOrange, WarningOrange.copy(alpha = 0.12f))
+                    }
+                    if (component.actualInspectorUserId != null && component.actualInspectorUserId != component.responsibleUserId) {
+                        StatusChip("协作", SuccessGreen, SuccessGreen.copy(alpha = 0.12f))
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.width(10.dp))
+            ComponentStatusChip(component.status)
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                component.status.compactActionText(),
+                color = BridgeBlue,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = BridgeBlue)
+        }
+    }
+}
+
+@Composable
+private fun CompactMetricPill(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFFF7F8FA))
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+            Text(value, color = CardText, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(label, color = SubtleText, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun BridgeInfoCorrectionDialog(
+    bridge: BridgeItem,
+    correctionNote: String,
+    onDismiss: () -> Unit,
+    onSave: (String, String, String, String, String, String) -> Unit,
+) {
+    var totalLength by rememberSaveable(bridge.id) { mutableStateOf(bridge.totalLength.toString()) }
+    var bridgeWidth by rememberSaveable(bridge.id) { mutableStateOf(bridge.bridgeWidth.toString()) }
+    var mainSpan by rememberSaveable(bridge.id) { mutableStateOf(bridge.mainSpan.toString()) }
+    var address by rememberSaveable(bridge.id) { mutableStateOf(bridge.address) }
+    var maintenanceUnit by rememberSaveable(bridge.id) { mutableStateOf(bridge.maintenanceUnit) }
+    var note by rememberSaveable(bridge.id) { mutableStateOf(correctionNote) }
+
+    AppEditorDialog(
+        title = "桥梁基础信息",
+        subtitle = "现场发现档案不准时，可以直接修正。后续报告会优先采用这里保存后的真实信息。",
+        onDismissRequest = onDismiss,
+        actions = {
+            DialogTextAction("关闭", onDismiss)
+            DialogPrimaryAction("保存修正") {
+                onSave(totalLength, bridgeWidth, mainSpan, address, maintenanceUnit, note)
+            }
+        },
+    ) {
+        DialogSectionTitle("档案信息")
+        InfoRow("桥梁编码", bridge.bridgeCode)
+        InfoRow("所属路线", bridge.route)
+        InfoRow("桥梁类型", bridge.bridgeType)
+        InfoRow("结构形式", bridge.structureType)
+        InfoRow("建成年份", "${bridge.constructionYear} 年")
+        Spacer(modifier = Modifier.height(8.dp))
+        DialogSectionTitle("现场可修正")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            AppFormField(
+                value = totalLength,
+                onValueChange = { totalLength = it },
+                label = "全长 m",
+                placeholder = "例如 123",
+                modifier = Modifier.weight(1f),
+            )
+            AppFormField(
+                value = bridgeWidth,
+                onValueChange = { bridgeWidth = it },
+                label = "宽度 m",
+                placeholder = "例如 30",
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        AppFormField(
+            value = mainSpan,
+            onValueChange = { mainSpan = it },
+            label = "主跨跨径 m",
+            placeholder = "例如 60",
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        AppFormField(
+            value = maintenanceUnit,
+            onValueChange = { maintenanceUnit = it },
+            label = "养护单位",
+            placeholder = "请输入现场确认后的养护单位",
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        AppFormField(
+            value = address,
+            onValueChange = { address = it },
+            label = "桥梁地址",
+            placeholder = "请输入现场确认后的地理位置",
+            minLines = 2,
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        AppFormField(
+            value = note,
+            onValueChange = { note = it },
+            label = "现场修正说明",
+            placeholder = "例如：现场复核桥梁全长为123m，原档案长度偏差3m",
+            supporting = "这条说明会进入报告预览，方便后续审核追溯。",
+            minLines = 3,
+        )
     }
 }
 
@@ -2645,18 +3526,24 @@ private fun ReportDetailScreen(
                 ))
             }
             item {
-                ReportSection("二、桥梁基本信息", listOf(
-                    "桥梁编码：${bridge.bridgeCode}",
-                    "所属路线：${bridge.route}",
-                    "桥梁类型：${bridge.bridgeType}",
-                    "结构形式：${bridge.structureType}",
-                    "建成年份：${bridge.constructionYear} 年",
-                    "桥梁全长：${bridge.totalLength} m",
-                    "桥面宽度：${bridge.bridgeWidth} m",
-                    "主跨跨径：${bridge.mainSpan} m",
-                    "养护单位：${bridge.maintenanceUnit}",
-                    "桥梁地址：${bridge.address}",
-                ))
+                ReportSection(
+                    "二、桥梁基本信息",
+                    buildList {
+                        add("桥梁编码：${bridge.bridgeCode}")
+                        add("所属路线：${bridge.route}")
+                        add("桥梁类型：${bridge.bridgeType}")
+                        add("结构形式：${bridge.structureType}")
+                        add("建成年份：${bridge.constructionYear} 年")
+                        add("桥梁全长：${bridge.totalLength} m")
+                        add("桥面宽度：${bridge.bridgeWidth} m")
+                        add("主跨跨径：${bridge.mainSpan} m")
+                        add("养护单位：${bridge.maintenanceUnit}")
+                        add("桥梁地址：${bridge.address}")
+                        if (preview.bridgeCorrectionNote.isNotBlank()) {
+                            add("现场修正说明：${preview.bridgeCorrectionNote}")
+                        }
+                    },
+                )
             }
             item {
                 SectionCard {
@@ -3616,7 +4503,7 @@ private fun MenuRow(
             if (onClick != null) {
                 Spacer(modifier = Modifier.width(8.dp))
                 Icon(
-                    imageVector = Icons.Default.KeyboardArrowRight,
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                     contentDescription = null,
                     tint = SubtleText,
                 )
@@ -3634,6 +4521,20 @@ private fun ComponentStatusChip(status: ComponentStatus) {
         ComponentStatus.Completed -> "已完成" to SuccessGreen
     }
     StatusChip(text = text, color = color, background = color.copy(alpha = 0.12f))
+}
+
+private fun ComponentStatus.compactActionText(): String = when (this) {
+    ComponentStatus.Pending -> "开始检测"
+    ComponentStatus.Collected -> "查看素材并识别"
+    ComponentStatus.AiDone -> "核对AI结果"
+    ComponentStatus.Completed -> "查看结果"
+}
+
+private fun String.displayProjectStatus(): String = when (this) {
+    "completed" -> "已完成"
+    "in_progress" -> "检测中"
+    "draft" -> "待开始"
+    else -> "检测中"
 }
 
 @Composable
@@ -3866,13 +4767,14 @@ private fun AppFormField(
     onValueChange: (String) -> Unit,
     label: String,
     placeholder: String,
+    modifier: Modifier = Modifier.fillMaxWidth(),
     supporting: String? = null,
     minLines: Int = 1,
 ) {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier,
         singleLine = minLines == 1,
         minLines = minLines,
         shape = RoundedCornerShape(18.dp),
